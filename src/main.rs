@@ -1,6 +1,112 @@
+use vizia::prelude::*;
+use vizia::vg;
+#[derive(Debug)]
+pub enum AppEvent {
+    SetHistogramTime(f32),
+}
+
+#[derive(Lens)]
+pub struct AppData {
+    histogram_data: HistogramData,
+}
+
+impl Model for AppData {
+    fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+        event.map(|app_event, meta| match app_event {
+            AppEvent::SetHistogramTime(histogram_time) => {
+                self.histogram_data.histogram_time= *histogram_time;
+            }
+        });
+    }
+}
+
+#[derive(Clone, Data, Lens)]
+pub struct HistogramData {
+    histogram_time: f32,
+}
+
+
+pub struct HistogramGraph<HistogramDataL: Lens<Target = HistogramData>>{
+    histogram_data: HistogramDataL,
+}
+
+impl<HistogramDataL: Lens<Target = HistogramData>> HistogramGraph<HistogramDataL> {
+    pub fn new(cx: &mut Context, histogram_data: HistogramDataL) -> Handle<Self> {
+        Self {
+            histogram_data,
+        }.build(cx, |cx|{
+            // If we want the view to contain other views we can build those here.
+        })
+        // Redraw when lensed data changes
+         .bind(histogram_data, |mut handle, _| handle.needs_redraw())
+    }
+}
+
+
+impl<HistogramDataL: Lens<Target = HistogramData>> View for HistogramGraph<HistogramDataL> {
+    // for css:
+    fn element(&self) -> Option<&'static str> {
+        Some("HistogramGraph")
+    }
+
+    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+        // Get the bounding box of the current view.
+        let bounds = cx.bounds();
+        // let histogram_time = self.histogram_data.get(cx).histogram_time;
+        // let bins = self.histogram_data.get(cx).bins;
+
+        let mut bins: [f32; NR_BINS] = [0.0; NR_BINS];
+
+        let nr_tests = NR_BINS * 32;
+        let db_min = DB_MIN - 1.0;
+        let db_max = DB_MAX + 1.0;
+
+
+        let mut rng = XorShiftRng::new(42); // Initialize with a seed
+
+        for _ in 0..nr_tests {
+            let db_value = db_min + rng.next() * (db_max - db_min);
+            let bin_index = find_bin(db_to_linear(db_value));
+            bins[bin_index] += 1.0; // Increment the count for the bin
+        }
+
+        let largest = bins.iter().fold(std::f32::MIN, |a,b| a.max(*b));
+        for i in 0..NR_BINS {
+            bins[i] /= largest;
+        }
+
+        let line_width = 2.5;
+
+        // Create a new `Path` from the `vg` module.
+        let mut path = vg::Path::new();
+        let x = bounds.x + line_width/2.0;
+        let y = bounds.y + line_width/2.0;
+        let w = bounds.w - line_width;
+        let h = bounds.h - line_width;
+
+        // Add a rectangle to the path with the dimensions of the view bounds.
+        path.rect(x, y, w, h);
+        canvas.fill_path(&mut path, &vg::Paint::color(Color::white().into()));
+        canvas.stroke_path(
+            &{
+                let mut path = vg::Path::new();
+                // start of the graph
+                path.move_to(x+bins[0]*w, y);
+                for i in 1..NR_BINS {
+                    path.line_to(x+bins[i]*w,y+h*i as f32/(NR_BINS-1) as f32);
+                }
+                path
+            },
+            &vg::Paint::color(Color::black().into())
+                .with_line_width(line_width),
+        );
+    }
+}
+
 const DB_MIN: f32 = -96.0;
 const DB_MAX: f32 = 24.0;
 const NR_BINS: usize = 255;
+// const NR_BINS: usize = 32;
 
 fn db_to_linear(db: f32) -> f32 {
     10.0_f32.powf(db / 20.0)
@@ -39,7 +145,6 @@ fn find_bin(value: f32) -> usize {
     left as usize
 }
 
-
 struct XorShiftRng {
     state: u64,
 }
@@ -57,30 +162,18 @@ impl XorShiftRng {
         (self.state & 0x7fffffff as u64) as f32 % 33.33 / 33.33
     }
 }
+
 fn main() {
-    let nr_tests = 4*48000; // sec * SR
-        let db_min = DB_MIN - 1.0;
-    let db_max = DB_MAX + 1.0;
+    Application::new(|cx| {
+        VStack::new(cx, |cx|{
+            // Slider::new(cx, AppData::histogram_data.then(HistogramData::histogram_time))
+            // .range(0.0..50.0)
+            // .on_changing(|cx, val| {cx.emit(AppEvent::SetHistogramTime(val));
+            // });
+            // Label::new(cx, AppData::histogram_data.then(HistogramData::histogram_time).map(|val| format!("{:.2}", val)));
+            HistogramGraph::new(cx, AppData::histogram_data);
+        });
 
-    let mut bins: [f32; NR_BINS] = [0.0; NR_BINS];
-
-    let mut rng = XorShiftRng::new(1); // Initialize with a seed
-
-    for _ in 0..nr_tests {
-        let db_value = db_min + rng.next() * (db_max - db_min);
-        let bin_index = find_bin(db_to_linear(db_value));
-        bins[bin_index] += 1.0; // Increment the count for the bin
-    }
-
-    // Normalize the counts to get the relative frequencies
-    let total_count = bins.iter().sum::<f32>();
-    for i in 0..NR_BINS {
-        bins[i] /= total_count;
-    }
-
-    for i in 0..NR_BINS {
-        println!("index: {},  value: {}", i, bins[i]);
-    }
-    println!("total count: {}", total_count)
-
+    })
+        .run();
 }

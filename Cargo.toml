@@ -9,3 +9,4 @@ description = "An exponentially decaying histogram"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+vizia = {git = "https://github.com/vizia/vizia"}
